@@ -1,5 +1,3 @@
-import OpenAI from 'openai';
-
 export const config = {
   runtime: 'nodejs',
 };
@@ -11,61 +9,62 @@ export default async function handler(req, res) {
   
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Check API key
-  if (!process.env.OPENAI_API_KEY) {
-    console.error('❌ OPENAI_API_KEY is missing!');
-    return res.status(500).json({ 
-      error: 'API key not configured',
-      message: 'Add OPENAI_API_KEY in Vercel settings'
-    });
-  }
-
   const { message } = req.body || {};
   if (!message) {
     return res.status(400).json({ error: 'No message provided' });
   }
 
-  console.log('📩 Received message:', message);
-
   try {
-    const openai = new OpenAI({ 
-      apiKey: process.env.OPENAI_API_KEY 
-    });
-
-    const systemPrompt = `You are a friendly voice shopping assistant for Hush Puppies footwear store.
+    // Call Google Gemini API
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `You are a friendly voice shopping assistant for Hush Puppies footwear store.
 
 RULES:
 1. Keep replies under 15 words. Be conversational.
-2. If user asks for trending/popular/new products, respond with:
+2. If user asks for trending/popular/new products, respond with ONLY this JSON:
 {"reply":"Opening trending collection for you...","action":"navigate","url":"/collections/trending-products"}
-3. If user asks about new arrivals:
+3. If user asks about new arrivals, respond with ONLY this JSON:
 {"reply":"Check out our latest arrivals!","action":"navigate","url":"/collections/new-arrivals"}
-4. Otherwise, just chat helpfully.`;
+4. Otherwise, just chat helpfully about shoes.
 
-    console.log('🤔 Calling OpenAI...');
-    
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: message }
-      ],
-      response_format: { type: "json_object" }
-    });
+User said: ${message}`
+            }]
+          }],
+          generationConfig: {
+            responseMimeType: "application/json",
+          }
+        })
+      }
+    );
 
-    console.log('✅ OpenAI response:', response.choices[0].message.content);
+    const data = await response.json();
     
-    const result = JSON.parse(response.choices[0].message.content);
+    if (!response.ok) {
+      throw new Error(data.error?.message || 'Gemini API error');
+    }
+
+    const aiResponse = data.candidates[0].content.parts[0].text;
+    
+    // Parse the JSON response
+    const result = JSON.parse(aiResponse);
+    
     return res.status(200).json(result);
     
   } catch (error) {
-    console.error('❌ OpenAI Error:', error.message);
-    console.error('Full error:', error);
+    console.error('❌ Gemini Error:', error.message);
     
     return res.status(500).json({ 
       error: 'AI service error',
-      message: error.message,
-      type: error.type
+      message: error.message 
     });
   }
 }
