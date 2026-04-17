@@ -14,27 +14,62 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'No message provided' });
   }
 
-  const SHOPIFY_URL = 'https://husan-e-libaas.myshopify.com';
+  // Gets the URLs from Vercel Environment Variables!
+  const SHOPIFY_URL = process.env.SHOPIFY_STORE_URL; 
+  const SHOPIFY_TOKEN = process.env.SHOPIFY_STOREFRONT_TOKEN;
+  
   let productContext = "No products found.";
 
-  // Step 1: Safely search Shopify (won't crash if store has a password)
+  // Step 1: Search Shopify using the VIP Storefront API Token
   try {
-    const searchQuery = encodeURIComponent(message);
-    const shopifyRes = await fetch(`${SHOPIFY_URL}/search/suggest.json?q=${searchQuery}&resources[type]=product&resources[limit]=5`);
-    
-    if (shopifyRes.ok) {
-      const shopifyData = await shopifyRes.json();
-      const products = shopifyData.resources?.results?.products || [];
-      
-      if (products.length > 0) {
-        productContext = products.map(p => `Title: ${p.title}, URL: ${p.url}`).join('\n');
+    if (SHOPIFY_URL && SHOPIFY_TOKEN) {
+      const query = `
+        query SearchProducts($searchTerm: String!) {
+          products(first: 5, query: $searchTerm) {
+            edges {
+              node {
+                title
+                handle
+                onlineStoreUrl
+              }
+            }
+          }
+        }
+      `;
+
+      const shopifyRes = await fetch(`https://${SHOPIFY_URL}/api/2024-01/graphql.json`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shopify-Storefront-Access-Token': SHOPIFY_TOKEN, // Uses your token!
+        },
+        body: JSON.stringify({ 
+          query, 
+          variables: { searchTerm: message } 
+        })
+      });
+
+      if (shopifyRes.ok) {
+        const shopifyData = await shopifyRes.json();
+        const products = shopifyData.data?.products?.edges || [];
+        
+        if (products.length > 0) {
+          productContext = products.map(p => {
+            const url = p.node.onlineStoreUrl || `https://${SHOPIFY_URL}/products/${p.node.handle}`;
+            return `Title: ${p.node.title}, URL: ${url}`;
+          }).join('\n');
+        }
+      } else {
+        console.error('Shopify API Error:', await shopifyRes.text());
       }
+    } else {
+      console.error('Missing SHOPIFY_URL or SHOPIFY_TOKEN in Vercel');
     }
   } catch (e) {
-    // Silently fail if Shopify is blocked
+    console.log('Shopify search error:', e.message);
   }
 
-  // Step 2: Ask Gemini with ALL the rules restored
+  // Step 2: Ask Gemini to decide what to do
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
@@ -44,18 +79,18 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `You are a friendly voice shopping assistant for Husan-e-Libaas.
+              text: `You are a friendly voice shopping assistant for our store.
 
-AVAILABLE PRODUCTS FROM SEARCH:
+AVAILABLE PRODUCTS FROM SHOPIFY:
  ${productContext}
 
 RULES (Return ONLY valid JSON):
 1. Keep replies under 15 words.
-2. If user asks for trending/popular/hot products, return: {"reply":"Opening trending collection for you...","action":"navigate","url":"/collections/trending-products"}
-3. If user asks for new arrivals/latest products, return: {"reply":"Check out our latest arrivals!","action":"navigate","url":"/collections/new-arrivals"}
-4. If user asks for a specific product (like jeans, shoes, shirt) AND products are listed above, pick the best match. Return: {"reply":"I found [Product Name]!","action":"navigate","url":"[EXACT_URL_FROM_LIST]"}
-5. If no products are found for their specific search, return: {"reply":"Sorry, I couldn't find that item.","action":null,"url":null}
-6. If just saying hi or general chat, return: {"reply":"Your friendly reply here.","action":null,"url":null}
+2. If user asks for trending/popular products, return: {"reply":"Opening trending collection!","action":"navigate","url":"/collections/trending-products"}
+3. If user asks for new arrivals/latest, return: {"reply":"Check out new arrivals!","action":"navigate","url":"/collections/new-arrivals"}
+4. If user asks for a SPECIFIC product (like jeans, shoes, cotton pants) AND products are listed above, pick the best match. Return: {"reply":"I found [Product Name]!","action":"navigate","url":"[EXACT_URL_FROM_LIST]"}
+5. If no products are found for their search, return: {"reply":"Sorry, I couldn't find that item.","action":null,"url":null}
+6. If just chatting (hi, hello), return: {"reply":"Your friendly reply.","action":null,"url":null}
 
 User said: ${message}`
             }]
@@ -78,9 +113,9 @@ User said: ${message}`
     let result;
     try {
       result = JSON.parse(aiResponse);
-      // Ensure URL is absolute
+      // Ensure URL is absolute for the widget to strip later
       if (result.url && result.url.startsWith('/')) {
-        result.url = `${SHOPIFY_URL}${result.url}`;
+        result.url = `https://${SHOPIFY_URL}${result.url}`;
       }
     } catch (e) {
       result = { reply: aiResponse.replace(/[^a-zA-Z0-9\s!?.]/g, '').trim(), action: null, url: null };
