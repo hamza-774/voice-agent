@@ -15,9 +15,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Call Google Gemini API
+    // Call Google Gemini API (FIXED: Changed to 2.5-flash for Free Tier)
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: {
@@ -54,8 +54,18 @@ User said: ${message}`
 
     const aiResponse = data.candidates[0].content.parts[0].text;
     
-    // Parse the JSON response
-    const result = JSON.parse(aiResponse);
+    // Safely parse the JSON response
+    let result;
+    try {
+      result = JSON.parse(aiResponse);
+    } catch (e) {
+      // If AI fails to output pure JSON, fallback to plain text
+      result = { 
+        reply: aiResponse.replace(/[^a-zA-Z0-9\s!?.]/g, '').trim(), 
+        action: null, 
+        url: null 
+      };
+    }
     
     return res.status(200).json(result);
     
