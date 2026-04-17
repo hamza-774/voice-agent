@@ -17,7 +17,6 @@ export default async function handler(req, res) {
   const SHOPIFY_URL = process.env.SHOPIFY_STORE_URL; 
   const SHOPIFY_TOKEN = process.env.SHOPIFY_STOREFRONT_TOKEN;
 
-  // DIAGNOSTIC STEP: Let's ask Shopify and see EXACTLY what it replies
   try {
     const query = `
       query SearchProducts($searchTerm: String!) {
@@ -29,7 +28,8 @@ export default async function handler(req, res) {
       }
     `;
 
-    const shopifyRes = await fetch(`https://${SHOPIFY_URL}/api/2024-01/graphql.json`, {
+    // 🔥 FIX: Changed from 2024-01 to 2024-10!
+    const shopifyRes = await fetch(`https://${SHOPIFY_URL}/api/2024-10/graphql.json`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -41,12 +41,11 @@ export default async function handler(req, res) {
       })
     });
 
-    const responseText = await shopifyRes.text(); // Get raw response
+    const responseText = await shopifyRes.text();
 
-    // If Shopify throws an error, we will make the voice assistant READ the error to you!
     if (!shopifyRes.ok) {
       return res.status(200).json({ 
-        reply: `Shopify blocked it. Status ${shopifyRes.status}. Details: ${responseText}`, 
+        reply: `Still blocked. Status ${shopifyRes.status}. Details: ${responseText}`, 
         action: null, 
         url: null 
       });
@@ -55,26 +54,24 @@ export default async function handler(req, res) {
     const shopifyData = JSON.parse(responseText);
     const products = shopifyData.data?.products?.edges || [];
     
-    // If no products found, read what Shopify actually sent back
     if (products.length === 0) {
       return res.status(200).json({ 
-        reply: `Shopify found zero products. It sent back this data: ${responseText}`, 
+        reply: `No products found for "${message}".`, 
         action: null, 
         url: null 
       });
     }
 
-    // If it WORKS, it will read out the products it found!
     const foundProducts = products.map(p => p.node.title).join(', ');
     return res.status(200).json({ 
-      reply: `I successfully found these items: ${foundProducts}`, 
+      reply: `Success! I found these items: ${foundProducts}`, 
       action: null, 
       url: null 
     });
 
   } catch (error) {
     return res.status(200).json({ 
-      reply: `Vercel crashed trying to reach Shopify. Error: ${error.message}`, 
+      reply: `Vercel crashed. Error: ${error.message}`, 
       action: null, 
       url: null 
     });
