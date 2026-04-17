@@ -14,13 +14,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'No message provided' });
   }
 
-  // Gets the URLs from Vercel Environment Variables!
   const SHOPIFY_URL = process.env.SHOPIFY_STORE_URL; 
   const SHOPIFY_TOKEN = process.env.SHOPIFY_STOREFRONT_TOKEN;
   
   let productContext = "No products found.";
 
-  // Step 1: Search Shopify using the VIP Storefront API Token
+  // Step 1: Search Shopify (Only triggers if they ask for something specific)
   try {
     if (SHOPIFY_URL && SHOPIFY_TOKEN) {
       const query = `
@@ -41,7 +40,7 @@ export default async function handler(req, res) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Shopify-Storefront-Access-Token': SHOPIFY_TOKEN, // Uses your token!
+          'X-Shopify-Storefront-Access-Token': SHOPIFY_TOKEN,
         },
         body: JSON.stringify({ 
           query, 
@@ -59,17 +58,13 @@ export default async function handler(req, res) {
             return `Title: ${p.node.title}, URL: ${url}`;
           }).join('\n');
         }
-      } else {
-        console.error('Shopify API Error:', await shopifyRes.text());
       }
-    } else {
-      console.error('Missing SHOPIFY_URL or SHOPIFY_TOKEN in Vercel');
     }
   } catch (e) {
-    console.log('Shopify search error:', e.message);
+    // Silent fail
   }
 
-  // Step 2: Ask Gemini to decide what to do
+  // Step 2: Ask Gemini
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
@@ -79,7 +74,7 @@ export default async function handler(req, res) {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `You are a friendly voice shopping assistant for our store.
+              text: `You are a friendly voice shopping assistant.
 
 AVAILABLE PRODUCTS FROM SHOPIFY:
  ${productContext}
@@ -88,9 +83,10 @@ RULES (Return ONLY valid JSON):
 1. Keep replies under 15 words.
 2. If user asks for trending/popular products, return: {"reply":"Opening trending collection!","action":"navigate","url":"/collections/trending-products"}
 3. If user asks for new arrivals/latest, return: {"reply":"Check out new arrivals!","action":"navigate","url":"/collections/new-arrivals"}
-4. If user asks for a SPECIFIC product (like jeans, shoes, cotton pants) AND products are listed above, pick the best match. Return: {"reply":"I found [Product Name]!","action":"navigate","url":"[EXACT_URL_FROM_LIST]"}
-5. If no products are found for their search, return: {"reply":"Sorry, I couldn't find that item.","action":null,"url":null}
-6. If just chatting (hi, hello), return: {"reply":"Your friendly reply.","action":null,"url":null}
+4. 🎯 NEW RULE: If user asks to see general products (e.g., "show me products", "what do you sell", "browse items", "open store") WITHOUT naming a specific type, return: {"reply":"Taking you to our catalog!","action":"navigate","url":"/collections/all"}
+5. If user asks for a SPECIFIC item (like "knife", "nail lamp", "candle") AND products are listed above, pick the best match. Return: {"reply":"I found [Product Name]!","action":"navigate","url":"[EXACT_URL_FROM_LIST]"}
+6. If no products are found for a specific search, return: {"reply":"Sorry, I couldn't find that item.","action":null,"url":null}
+7. If just chatting (hi, hello), return: {"reply":"Your friendly reply.","action":null,"url":null}
 
 User said: ${message}`
             }]
@@ -113,7 +109,6 @@ User said: ${message}`
     let result;
     try {
       result = JSON.parse(aiResponse);
-      // Ensure URL is absolute for the widget to strip later
       if (result.url && result.url.startsWith('/')) {
         result.url = `https://${SHOPIFY_URL}${result.url}`;
       }
