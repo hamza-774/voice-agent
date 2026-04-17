@@ -1,145 +1,97 @@
-{% comment %} Voice Assistant Widget - Step 1 {% endcomment %}
-<div id="voice-assistant-root" style="position: fixed; bottom: 20px; right: 20px; z-index: 9999; font-family: system-ui;">
+export const config = {
+  runtime: 'nodejs',
+};
+
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
-  <!-- Chat Panel (hidden by default) -->
-  <div id="va-panel" style="display: none; width: 320px; background: white; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); overflow: hidden; margin-bottom: 12px;">
-    <div style="padding: 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; font-weight: 600;">
-      🎤 Voice Assistant
-      <button id="va-close" style="float: right; background: none; border: none; color: white; font-size: 20px; cursor: pointer;">&times;</button>
-    </div>
-    <div id="va-messages" style="max-height: 300px; overflow-y: auto; padding: 12px; font-size: 14px; line-height: 1.4;"></div>
-    <div style="padding: 12px; border-top: 1px solid #eee; display: flex; gap: 8px;">
-      <button id="va-mic" style="flex: 1; padding: 10px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 500;">🎤 Hold to Speak</button>
-    </div>
-  </div>
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
-  <!-- Floating Toggle Button -->
-  <button id="va-toggle" style="width: 60px; height: 60px; border-radius: 50%; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; color: white; font-size: 24px; cursor: pointer; box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4); transition: transform 0.2s;">
-    🎤
-  </button>
-</div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  const root = document.getElementById('voice-assistant-root');
-  const panel = document.getElementById('va-panel');
-  const toggle = document.getElementById('va-toggle');
-  const closeBtn = document.getElementById('va-close');
-  const micBtn = document.getElementById('va-mic');
-  const messagesDiv = document.getElementById('va-messages');
-
-  // Toggle panel
-  toggle.onclick = () => panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-  closeBtn.onclick = () => panel.style.display = 'none';
-
-  // Add message to chat
-  function addMessage(text, isUser = false) {
-    const msg = document.createElement('div');
-    msg.style.cssText = `padding: 10px 14px; margin: 8px 0; border-radius: 12px; background: ${isUser ? '#667eea' : '#f1f1f1'}; color: ${isUser ? 'white' : '#333'}; align-self: ${isUser ? 'flex-end' : 'flex-start'};`;
-    msg.textContent = text;
-    messagesDiv.appendChild(msg);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+  const { message } = req.body || {};
+  if (!message) {
+    return res.status(400).json({ error: 'No message provided' });
   }
 
-  // Web Speech API setup (Chrome/Safari/Edge)
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const recognition = SpeechRecognition ? new SpeechRecognition() : null;
-  const synth = window.speechSynthesis;
+  const SHOPIFY_URL = 'https://husan-e-libaas.myshopify.com';
+  let productContext = "No products found.";
 
-  if (recognition) {
-    recognition.lang = 'en-US';
-    recognition.interimResults = false;
-
-    let isListening = false;
-
-    micBtn.onmousedown = () => {
-      if (!isListening) {
-        try {
-          recognition.start();
-          micBtn.textContent = '🔴 Listening...';
-          micBtn.style.background = '#e53e3e';
-          isListening = true;
-          addMessage("Listening... Tap mic when done.", true);
-        } catch(e) {
-          console.log('Speech recognition error:', e);
-          addMessage("Mic error — try clicking once instead of holding.", false);
-        }
-      }
-    };
+  // Step 1: Safely ask Shopify for products (Isolated so it never crashes the app)
+  try {
+    const searchQuery = encodeURIComponent(message);
+    const shopifyRes = await fetch(`${SHOPIFY_URL}/search/suggest.json?q=${searchQuery}&resources[type]=product&resources[limit]=5`);
     
-    recognition.onresult = async (event) => {
-      const transcript = event.results[0][0].transcript;
-      addMessage(`You: ${transcript}`, true);
+    if (shopifyRes.ok) {
+      const shopifyData = await shopifyRes.json();
+      const products = shopifyData.resources?.results?.products || [];
       
-      // Show loading state
-      micBtn.textContent = '⏳ Thinking...';
-      micBtn.style.background = '#9ca3af';
-      
-      try {
-        // 🔗 FIXED: Using /api/voice because Vercel Root Directory is now set to 'voice-agent'
-        const VERCEL_URL = 'https://voice-agent-virid-one.vercel.app';
-        
-        const response = await fetch(`${VERCEL_URL}/api/voice`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: transcript })
-        });
-        
-        const data = await response.json();
-        
-        // Handle API errors
-        if (data.error) {
-          addMessage(`Assistant: ${data.message || data.error}`, false);
-          speak("Sorry, I'm having trouble. Please try again.");
-        } else {
-          // Show AI reply
-          addMessage(`Assistant: ${data.reply}`, false);
-          speak(data.reply);
-          
-          // 🎯 Execute AI actions
-          if (data.action === 'navigate' && data.url) {
-            setTimeout(() => {
-              window.location.href = data.url;
-            }, 1500); // Wait for voice to finish speaking
-          }
-        }
-        
-      } catch (error) {
-        console.error('AI fetch failed:', error);
-        addMessage('Assistant: Connection error. Check console.', false);
+      if (products.length > 0) {
+        productContext = products.map(p => `Title: ${p.title}, URL: ${p.url}`).join('\n');
       }
-      
-      // Reset mic button
-      micBtn.textContent = '🎤 Hold to Speak';
-      micBtn.style.background = '#667eea';
-      isListening = false;
-    };
-
-    recognition.onerror = (event) => {
-      console.error('Speech error:', event.error);
-      addMessage("Mic error — please allow microphone access.", false);
-      micBtn.textContent = '🎤 Hold to Speak';
-      micBtn.style.background = '#667eea';
-      isListening = false;
-    };
-  } else {
-    micBtn.disabled = true;
-    micBtn.textContent = '🎤 Not Supported';
-    addMessage("Voice not supported in this browser. Try Chrome.", false);
+    }
+  } catch (shopifyError) {
+    console.log('Shopify search skipped:', shopifyError.message);
+    // If Shopify fails, we just continue with "No products found"
   }
 
-  // Speak text aloud
-  function speak(text) {
-    if (synth.speaking) synth.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.95; // Slightly slower for clarity
-    synth.speak(utterance);
-  }
+  // Step 2: Ask Gemini to respond based on the products
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `You are a voice shopping assistant.
 
-  // Welcome message
-  setTimeout(() => {
-    addMessage("👋 Hi! I'm your voice shopping assistant. Click the mic and ask me anything about Hush Puppies!");
-    speak("Hi! I'm your voice shopping assistant. Ask me about shoes, sizes, or trending products.");
-  }, 500);
-});
-</script>
+AVAILABLE PRODUCTS:
+ ${productContext}
+
+RULES:
+1. Keep replies under 20 words.
+2. If the user wants a product AND products are listed, pick the best one. Return JSON: {"reply":"I found [Name] for you!","action":"navigate","url":"/products/slug-here"}
+3. If no products are found, return JSON: {"reply":"Sorry, I couldn't find that.","action":null,"url":null}
+4. If just chatting (no product request), return JSON: {"reply":"Your friendly reply.","action":null,"url":null}
+
+User said: ${message}`
+            }]
+          }],
+          generationConfig: {
+            responseMimeType: "application/json",
+          }
+        })
+      }
+    );
+
+    const data = await response.json();
+    
+    if (!response.ok) {
+      throw new Error(data.error?.message || 'Gemini API error');
+    }
+
+    const aiResponse = data.candidates[0].content.parts[0].text;
+    
+    let result;
+    try {
+      result = JSON.parse(aiResponse);
+      // Fix URL if Gemini only returned the path
+      if (result.url && result.url.startsWith('/')) {
+        result.url = `${SHOPIFY_URL}${result.url}`;
+      }
+    } catch (e) {
+      result = { reply: aiResponse.replace(/[^a-zA-Z0-9\s!?.]/g, '').trim(), action: null, url: null };
+    }
+    
+    return res.status(200).json(result);
+    
+  } catch (error) {
+    console.error('❌ Gemini Error:', error.message);
+    return res.status(500).json({ 
+      error: 'AI service error',
+      message: error.message 
+    });
+  }
+}
