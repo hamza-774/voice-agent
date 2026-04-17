@@ -15,26 +15,43 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Call Google Gemini API (FIXED: Changed to 2.5-flash for Free Tier)
+    const SHOPIFY_URL = 'https://husan-e-libaas.myshopify.com';
+    
+    // Step 1: Ask Shopify for products (100% Free, No API Token needed)
+    const searchQuery = encodeURIComponent(message);
+    const shopifyRes = await fetch(`${SHOPIFY_URL}/search/suggest.json?q=${searchQuery}&resources[type]=product&resources[limit]=5`);
+    const shopifyData = await shopifyRes.json();
+    
+    // Extract product titles and URLs
+    const products = shopifyData.resources?.results?.products || [];
+    
+    let productContext = "No products found.";
+    if (products.length > 0) {
+      productContext = products.map(p => `- ${p.title} (URL: ${p.url})`).join('\n');
+    }
+
+    // Step 2: Ask Gemini to pick the best product OR just chat
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `You are a friendly voice shopping assistant for Hush Puppies footwear store.
+              text: `You are a voice shopping assistant for Husan-e-Libaas.
+
+AVAILABLE PRODUCTS FROM SHOPIFY SEARCH:
+ ${productContext}
 
 RULES:
-1. Keep replies under 15 words. Be conversational.
-2. If user asks for trending/popular/new products, respond with ONLY this JSON:
-{"reply":"Opening trending collection for you...","action":"navigate","url":"/collections/trending-products"}
-3. If user asks about new arrivals, respond with ONLY this JSON:
-{"reply":"Check out our latest arrivals!","action":"navigate","url":"/collections/new-arrivals"}
-4. Otherwise, just chat helpfully about shoes.
+1. Keep replies under 20 words.
+2. If the user asks for a product/suggestion AND products are listed above, pick the BEST match.
+   Respond with ONLY this JSON: {"reply":"I found [Product Name] for you!","action":"navigate","url":"${SHOPIFY_URL}[EXACT_URL_FROM_LIST]"}
+3. If the user asks for a product BUT the list says "No products found", respond with ONLY this JSON:
+   {"reply":"Sorry, I couldn't find that item.","action":null,"url":null}
+4. If the user is just saying hi or making general chat (not looking for a product), respond with ONLY this JSON:
+   {"reply":"Your friendly reply here","action":null,"url":null}
 
 User said: ${message}`
             }]
@@ -54,26 +71,24 @@ User said: ${message}`
 
     const aiResponse = data.candidates[0].content.parts[0].text;
     
-    // Safely parse the JSON response
+    // Safely parse JSON
     let result;
     try {
       result = JSON.parse(aiResponse);
+      // Ensure the URL is absolute if Gemini messes up
+      if (result.url && !result.url.startsWith('http')) {
+        result.url = `${SHOPIFY_URL}${result.url}`;
+      }
     } catch (e) {
-      // If AI fails to output pure JSON, fallback to plain text
-      result = { 
-        reply: aiResponse.replace(/[^a-zA-Z0-9\s!?.]/g, '').trim(), 
-        action: null, 
-        url: null 
-      };
+      result = { reply: aiResponse.replace(/[^a-zA-Z0-9\s!?.]/g, '').trim(), action: null, url: null };
     }
     
     return res.status(200).json(result);
     
   } catch (error) {
-    console.error('❌ Gemini Error:', error.message);
-    
+    console.error('❌ Error:', error.message);
     return res.status(500).json({ 
-      error: 'AI service error',
+      error: 'Service error',
       message: error.message 
     });
   }
